@@ -434,4 +434,68 @@ export const queueRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
   );
+
+  server.post(
+    "/:id/test-job",
+    {
+      schema: {
+        tags: ["Queues"],
+        summary: "Dispatch a test job to a queue",
+        security: [{ bearerAuth: [] }],
+        params: z.object({
+          id: z.string().uuid(),
+        }),
+        response: {
+          201: z.object({
+            success: z.literal(true),
+            data: z.object({ id: z.string() }),
+          }),
+          403: z.object({
+            success: z.literal(false),
+            error: z.object({ code: z.string(), message: z.string() }),
+          }),
+        },
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+      const userId = (request.user as any).sub;
+
+      const queueData = await db
+        .select({ projectId: queues.projectId })
+        .from(queues)
+        .where(eq(queues.id, id))
+        .limit(1);
+
+      if (queueData.length === 0) {
+        return reply.status(404).send({
+          success: false,
+          error: { code: "NOT_FOUND", message: "Queue not found" },
+        });
+      }
+
+      const hasAccess = await verifyProjectAccess(userId, queueData[0].projectId);
+      if (!hasAccess) {
+        return reply.status(403).send({
+          success: false,
+          error: { code: "FORBIDDEN", message: "Access denied" },
+        });
+      }
+
+      const [newJob] = await db
+        .insert(jobs)
+        .values({
+          queueId: id,
+          type: "test-job",
+          payload: { message: "This is a test job triggered from the dashboard", timestamp: Date.now() },
+          status: "pending",
+        })
+        .returning({ id: jobs.id });
+
+      return reply.status(201).send({
+        success: true,
+        data: { id: newJob.id },
+      });
+    }
+  );
 };

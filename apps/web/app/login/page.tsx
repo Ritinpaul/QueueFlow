@@ -31,7 +31,7 @@ export default function LoginPage() {
 
       // Store token securely (localStorage for simplicity in this prototype)
       localStorage.setItem("queueflow_token", data.data.token);
-      router.push("/dashboard/projects");
+      router.push("/dashboard");
     } catch (err: any) {
       setError(err.message);
     } finally {

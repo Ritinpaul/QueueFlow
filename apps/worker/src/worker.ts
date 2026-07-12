@@ -160,14 +160,12 @@ export class JobWorker {
         queueFilter = inArray(queues.name, this.queues);
       }
 
-      // Fetch pending or due scheduled jobs
       const result = await tx.execute(
         sql`
           SELECT j.id, j.type, j.payload, j.attempt_count, j.max_attempts, j.queue_id
           FROM ${jobs} j
           JOIN ${queues} q ON j.queue_id = q.id
-          WHERE q.project_id = ${this.projectId}
-            AND q.status = 'active'
+          WHERE q.status = 'active'
             AND ${queueFilter}
             AND (
               j.status = 'pending' 

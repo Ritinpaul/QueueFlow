@@ -1,18 +1,40 @@
 import "./env.js";
 import { JobWorker } from "./worker.js";
 
-const PROJECT_ID = process.env.PROJECT_ID;
+import { db } from "@scheduler/db";
+import { projects } from "@scheduler/db/src/schema.js";
 
-if (!PROJECT_ID) {
-  console.error("ERROR: PROJECT_ID environment variable is required to start the worker.");
-  process.exit(1);
-}
+import { eq } from "drizzle-orm";
 
-const worker = new JobWorker({
-  projectId: PROJECT_ID,
-  concurrency: process.env.CONCURRENCY ? parseInt(process.env.CONCURRENCY, 10) : 5,
-  pollIntervalMs: process.env.POLL_INTERVAL ? parseInt(process.env.POLL_INTERVAL, 10) : 1000,
-});
+async function run() {
+  let projectId = process.env.PROJECT_ID;
+
+  let validProject = false;
+  if (projectId) {
+    // Only check if it's a valid UUID format, then check DB
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId)) {
+      const check = await db.select({ id: projects.id }).from(projects).where(eq(projects.id, projectId)).limit(1);
+      if (check.length > 0) validProject = true;
+    }
+  }
+
+  if (!validProject) {
+    console.log(`Provided PROJECT_ID is invalid or not provided. Fetching a default project from the database...`);
+    const projectRows = await db.select({ id: projects.id }).from(projects).limit(1);
+    if (projectRows.length > 0) {
+      projectId = projectRows[0].id;
+      console.log(`Using Project ID: ${projectId}`);
+    } else {
+      console.error("ERROR: No projects found in the database. Please create a project first.");
+      process.exit(1);
+    }
+  }
+
+  const worker = new JobWorker({
+    projectId: projectId,
+    concurrency: process.env.CONCURRENCY ? parseInt(process.env.CONCURRENCY, 10) : 5,
+    pollIntervalMs: process.env.POLL_INTERVAL ? parseInt(process.env.POLL_INTERVAL, 10) : 1000,
+  });
 
 // Register sample handlers
 worker.registerHandler("email.send", async (payload) => {
@@ -34,18 +56,27 @@ worker.registerHandler("data.sync", async (payload) => {
   return { syncedRecords: 142 };
 });
 
-// Start the worker
-worker.start().catch((err) => {
-  console.error("Failed to start worker:", err);
-  process.exit(1);
+worker.registerHandler("test-job", async (payload) => {
+  console.log(`[Handler: test-job] Received test job payload:`, payload);
+  await new Promise((r) => setTimeout(r, 2000));
+  return { status: "Success!", processedAt: Date.now() };
 });
 
-// Graceful shutdown
-const handleShutdown = async (signal: string) => {
-  console.log(`\nReceived ${signal}. Starting graceful shutdown...`);
-  await worker.stop();
-  process.exit(0);
-};
+  // Start the worker
+  worker.start().catch((err) => {
+    console.error("Failed to start worker:", err);
+    process.exit(1);
+  });
 
-process.on("SIGINT", () => handleShutdown("SIGINT"));
-process.on("SIGTERM", () => handleShutdown("SIGTERM"));
+  // Graceful shutdown
+  const handleShutdown = async (signal: string) => {
+    console.log(`\nReceived ${signal}. Starting graceful shutdown...`);
+    await worker.stop();
+    process.exit(0);
+  };
+
+  process.on("SIGINT", () => handleShutdown("SIGINT"));
+  process.on("SIGTERM", () => handleShutdown("SIGTERM"));
+}
+
+run();
